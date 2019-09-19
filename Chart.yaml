@@ -1,0 +1,12 @@
+version: 1.0.0
+description: logstash with RESTful configuration support
+icon: https://www.elastic.co/assets/blt86e4472872eed314/logo-elastic-logstash-lt.svg
+home: https://www.github.com/batrako/logstashChart
+maintainers:
+- email: fsmetar@gmail.com
+  name: Iván Alvarez
+name: logstash
+appVersion: 7.3.2
+sources:
+  - https://www.github.com/batrako/logstashChart
+  - https://www.elastic.co/products/logstash

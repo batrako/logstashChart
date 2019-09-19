@@ -1,0 +1,170 @@
+---
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: {{ template "uname" . }}
+  labels:
+    heritage: {{ .Release.Service | quote }}
+    release: {{ .Release.Name | quote }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    app: "{{ template "uname" . }}"
+    caas_app: "{{ template "appname" . }}"
+spec:
+  serviceName: {{ template "uname" . }}-headless
+  selector:
+    matchLabels:
+      app: "{{ template "uname" . }}"
+  replicas: {{ default .Values.replicas }}
+  podManagementPolicy: {{ .Values.podManagementPolicy }}
+  updateStrategy:
+    type: {{ .Values.updateStrategy }}
+  template:
+    metadata:
+      name: "{{ template "uname" . }}"
+      labels:
+        heritage: {{ .Release.Service | quote }}
+        release: {{ .Release.Name | quote }}
+        chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+        app: "{{ template "uname" . }}"
+    spec:
+      securityContext:
+        fsGroup: {{ .Values.fsGroup }}
+      {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      {{- if eq .Values.antiAffinity "hard" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - "{{ template "uname" .}}"
+            topologyKey: {{ .Values.antiAffinityTopologyKey }}
+      {{- else if eq .Values.antiAffinity "soft" }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: {{ .Values.antiAffinityTopologyKey }}
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - "{{ template "uname" . }}"
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriod }}
+      {{- if .Values.secretMounts }}
+      volumes:
+        {{- range .Values.secretMounts }}
+        - name: {{ .name }}
+          secret:
+            secretName: {{ .name }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      {{- end }}
+      initContainers:
+      - name: init-config
+        securityContext:
+          runAsUser: 0
+        image: "{{ .Values.image }}:{{ .Values.imageTag }}"
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/logstash/config/
+        command: ["sh", "-c", "mkdir -p /usr/share/logstash/config; mkdir -p /usr/share/logstash/config/pipeline; mkdir -p /usr/share/logstash/config/patterns; touch /usr/share/logstash/config/logstash.yml; if [ -z \"$(ls -A /usr/share/logstash/config/pipeline/)\" ]; then echo 'input {}\nfilter{}\noutput{}\n' > /usr/share/logstash/config/pipeline/pipeline.conf; echo '- pipeline.id: pipeline_1\n  path.config: \"/usr/share/logstash/config/pipeline/pipeline.conf\"' > /usr/share/logstash/config/pipelines.yml; fi; chown -R 1000:1000 /usr/share/logstash"]
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "500Mi"
+          limits:
+            cpu: "200m"
+            memory: "1Gi"
+      containers:
+      - name: "{{ template "name" . }}"
+        image: "{{ .Values.image }}:{{ .Values.imageTag }}"
+        imagePullPolicy: "{{ .Values.imagePullPolicy }}"
+        readinessProbe:
+{{ toYaml .Values.readinessProbe | indent 10 }}
+          exec:
+            command: 
+              - sh
+              - -c
+              - |
+                #!/usr/bin/env bash -e
+                # check that the node api is respondig
+                http () {
+                    local path="${1}"
+                    curl -XGET -s -k --fail {{ .Values.protocol }}://127.0.0.1:{{ .Values.httpPort }}${path}
+                }              
+                echo 'Waiting for logstash api is responding'
+                http "/_node/stats/jvm" ;
+        ports:
+        - name: logstashapi
+          containerPort: {{ .Values.httpPort }}
+        resources:
+{{ toYaml .Values.resources | indent 10 }}
+        env:
+          - name: node.name
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: LS_JAVA_OPTS
+            value: "{{ .Values.lsJavaOpts }}"
+          - name: CONFIG_RELOAD_AUTOMATIC
+            value: "{{ .Values.configReloadAutomatic }}"
+          - name: http.host
+            value: "0.0.0.0"
+{{- if .Values.extraEnvs }}
+{{ toYaml .Values.extraEnvs | indent 10 }}
+{{- end }}
+        volumeMounts:
+          - name: config
+            mountPath: /usr/share/logstash/config/
+          {{- range .Values.secretMounts }}
+          - name: {{ .name }}
+            mountPath: {{ .path }}
+            {{- if .subPath }}
+            subPath: {{ .subPath }}
+            {{- end }}
+          {{- end }}
+      - name: "{{ template "name" . }}-api"
+        image: "{{ .Values.imageApi }}:{{ .Values.imageTagApi }}"
+        imagePullPolicy: "{{ .Values.imagePullPolicy }}"
+        ports:
+          - containerPort: 8080
+            name: lsapi
+        livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /v2/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+        env:
+          - name: node.name
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: LOGSTASH_CONFIG_PATH
+            value: "/usr/share/logstash/config"
+        volumeMounts:
+          - name: config
+            mountPath: /usr/share/logstash/config/
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: "{{ template "claimName" . }}-config"
+

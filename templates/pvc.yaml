@@ -1,0 +1,30 @@
+{{- if (eq .Values.config.dynamicProvision true) }}
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: {{ template "namespace" . }}-{{ template "claimName" .}}-config
+  labels:
+    unique: {{ template "namespace" . }}-{{ template "claimName" .}}-config
+spec:
+  capacity:
+    storage: {{ .Values.config.resources.request.storage }}
+  accessModes: {{ .Values.config.accessModes }}
+  hostPath:
+    path: "/tmp/logstashapi-config"
+  storageClassName: {{ .Values.config.storageClassName }}
+  persistentVolumeReclaimPolicy: Retain
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: {{ template "claimName" . }}-config
+spec:
+  accessModes: {{ .Values.config.accessModes }}
+  resources:
+    requests:
+      storage: {{ .Values.config.resources.request.storage }}
+  storageClassName: {{ .Values.config.storageClassName }}
+  selector:
+    matchLabels:
+      unique: {{ template "namespace" . }}-{{ template "claimName" .}}-config
+{{- end }}
